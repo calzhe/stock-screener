@@ -1,11 +1,10 @@
 from bs4 import BeautifulSoup
 from urllib.request import urlopen, Request
-import pandas as pd
-import matplotlib.pyplot as plt
-import flair
-from prettytable import PrettyTable
+import os
+from texttable import Texttable
+from google.cloud import language_v1
 
-sentiment_model = flair.models.TextClassifier.load('en-sentiment')
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "D:/Documents/certs/serious-case-336420-420fbde15dea.json"
 
 def main():
     ticker = input('Ticker: ').upper()
@@ -25,14 +24,20 @@ def main():
     parsed_news = parseNews(news_table, stock_name, ticker)
     overall_sentiment = calculateOverallSentiment(parsed_news[1])
 
-    table = PrettyTable([f'{ticker} ({parsed_news[0]})', 'Confidence Score', 'Sentiment'])
-    table.add_rows(parsed_news[1])
-    table.add_row(['-','-','-'])
-    table.add_row(overall_sentiment)
+    table_data = [[f'{ticker} ({parsed_news[0]})', 'Confidence Score', 'Sentiment']]
+    table_data.extend(parsed_news[1])
+    table_data.append(['-','-','-'])
+    table_data.append(overall_sentiment)
     
-    print(table)
+    table = Texttable()
+    table.add_rows(table_data)
+    table.set_cols_align(['l', 'c', 'c'])
+    table.set_deco(Texttable.HEADER | Texttable.BORDER)
+    
+    print(table.draw())
 
 def parseNews(news_table, stock_name, ticker):
+    google_client = language_v1.LanguageServiceClient()
     results = []
     most_recent_date = news_table.find('tr').td.text.split()[0]
     
@@ -47,10 +52,19 @@ def parseNews(news_table, stock_name, ticker):
             if len(date_scrape) != 1:
                 most_recent_date = date_scrape[0]
                 
-            sentence = flair.data.Sentence(text)
-            sentiment_model.predict(sentence)
-            rating = sentence.labels[0].value
-            score = f'{round(sentence.labels[0].score * 100)} %'
+            document = {"content": text, "type_": language_v1.Document.Type.PLAIN_TEXT, "language": "en"}
+            encoding_type = language_v1.EncodingType.UTF8
+            response = google_client.analyze_sentiment(request = {'document': document, 'encoding_type': encoding_type})
+
+            score = f'{round(response.document_sentiment.score * 100)} %'
+            rating = ''
+            if response.document_sentiment.score > 0:
+                rating = 'POSITIVE'
+            elif response.document_sentiment.score < 0:
+                rating = 'NEGATIVE'
+            else:
+                rating = 'NEUTRAL'
+
             results.append([text, score, rating])
             
     return [most_recent_date, results]
@@ -64,7 +78,7 @@ def calculateOverallSentiment(sentiments):
         
         if rating == 'POSITIVE':
             positive_count += 1
-        else:
+        elif rating == 'NEGATIVE':
             negative_count += 1
     
     if positive_count == 0 and negative_count == 0:
@@ -88,31 +102,3 @@ def calculateOverallSentiment(sentiments):
     
 while True:
     main()
-    
-# # Iterate through the headlines and get the polarity scores using vader
-# scores = parsed_and_scored_news['headline'].apply(vader.polarity_scores).tolist()
-
-# # Convert the 'scores' list of dicts into a DataFrame
-# scores_df = pd.DataFrame(scores)
-
-# # Join the DataFrames of the news and the list of dicts
-# parsed_and_scored_news = parsed_and_scored_news.join(scores_df, rsuffix='_right')
-
-# # Convert the date column from string to datetime
-# parsed_and_scored_news['date'] = pd.to_datetime(parsed_and_scored_news.date).dt.date
-
-# plt.rcParams['figure.figsize'] = [10, 6]
-
-# # Group by date and ticker columns from scored_news and calculate the mean
-# mean_scores = parsed_and_scored_news.groupby(['ticker','date']).mean()
-
-# # Unstack the column ticker
-# mean_scores = mean_scores.unstack()
-
-# # Get the cross-section of compound in the 'columns' axis
-# mean_scores = mean_scores.xs('compound', axis="columns").transpose()
-
-# # Plot a bar chart with pandas
-# mean_scores.plot(kind = 'bar')
-# plt.grid()
-# plt.show()
